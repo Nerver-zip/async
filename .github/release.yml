@@ -1,0 +1,25 @@
+# Fallback for releases created manually in the GitHub UI. Tag-triggered
+# releases use generate_release_notes.py and categorize Conventional Commits.
+changelog:
+  categories:
+    - title: '🚀 Features'
+      labels:
+        - 'enhancement'
+        - 'feature'
+    - title: '🐛 Bug Fixes'
+      labels:
+        - 'bug'
+        - 'fix'
+    - title: '🔒 Security'
+      labels:
+        - 'security'
+    - title: '🧰 Maintenance, Infrastructure & Documentation'
+      labels:
+        - 'maintenance'
+        - 'dependencies'
+        - 'github_actions'
+        - 'documentation'
+        - 'ci'
+    - title: '📦 Other Changes'
+      labels:
+        - '*'

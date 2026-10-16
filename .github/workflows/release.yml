@@ -25,11 +25,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate release notes
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p "${RUNNER_TEMP}"
+          python3 .github/scripts/generate_release_notes.py \
+            --tag "${tag}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --output "${RUNNER_TEMP}/release-notes.md"
+          cat "${RUNNER_TEMP}/release-notes.md"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

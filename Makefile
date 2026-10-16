@@ -11,6 +11,7 @@ build:
 
 test:
 	go test -v -count=1 -race ./...
+	python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
 vet:
 	go vet ./...

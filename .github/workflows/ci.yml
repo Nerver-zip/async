@@ -54,6 +54,9 @@ jobs:
       - name: Unit and integration tests (race)
         run: go test -v -count=1 -race ./...
 
+      - name: Test release-note generation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Build static binary and smoke test
         run: |
           set -eu
