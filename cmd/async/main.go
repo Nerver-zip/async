@@ -376,24 +376,12 @@ func runPull(cfg *config.Config, provider string, args []string, stdout io.Write
 		return err
 	}
 
-	// 3. Determine local destination workspace path
-	localTargetWS := cwd
-	if pf.id != "" && remoteMeta.Workspace != "" {
-		remoteProj := pathmap.ProjectName(remoteMeta.Workspace)
-		if pathmap.ProjectName(cwd) != remoteProj {
-			resolvedLocal, _, err := pathmap.ResolveWorkspaceDir(cfg.LocalPrefix, remoteProj)
-			if err != nil {
-				return err
-			}
-			localTargetWS = resolvedLocal
-		}
-	}
-
-	// 4. Check local locks and conflict status
+	// 3. Check local locks, existing metadata, and conflict status
 	if err := checkLocalLocks(cfg, provider, remoteMeta.ID); err != nil {
 		return err
 	}
-	if localExisting, err := findLocalSession(cfg, provider, remoteMeta.ID, ""); err == nil && localExisting != nil {
+	localExisting, _ := findLocalSession(cfg, provider, remoteMeta.ID, "")
+	if localExisting != nil {
 		if !pf.force {
 			if localExisting.UpdatedAt > remoteMeta.UpdatedAt ||
 				(localExisting.UpdatedAt == remoteMeta.UpdatedAt && localExisting.StepCount > remoteMeta.StepCount) {
@@ -403,6 +391,23 @@ func runPull(cfg *config.Config, provider string, args []string, stdout io.Write
 					SrcMeta:   *remoteMeta,
 					DstMeta:   *localExisting,
 				}
+			}
+		}
+	}
+
+	// 4. Determine local destination workspace path
+	localTargetWS := cwd
+	if pf.id != "" {
+		if localExisting != nil && localExisting.Workspace != "" {
+			localTargetWS = localExisting.Workspace
+		} else if remoteMeta.Workspace != "" {
+			remoteProj := pathmap.ProjectName(remoteMeta.Workspace)
+			if pathmap.ProjectName(cwd) != remoteProj {
+				resolvedLocal, _, err := pathmap.ResolveWorkspaceDir(cfg.LocalPrefix, remoteProj)
+				if err != nil {
+					return err
+				}
+				localTargetWS = resolvedLocal
 			}
 		}
 	}

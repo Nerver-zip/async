@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // SessionMeta describes a conversation session in either Codex or Antigravity CLI.
@@ -106,6 +107,8 @@ func FromSQL(v any) TypedValue {
 		return TypedValue{Type: "float", Flt: val}
 	case string:
 		return TypedValue{Type: "text", Str: val}
+	case time.Time:
+		return TypedValue{Type: "text", Str: val.UTC().Format("2006-01-02 15:04:05.999999999-07:00")}
 	case []byte:
 		return TypedValue{Type: "blob", Str: base64.StdEncoding.EncodeToString(val)}
 	default:

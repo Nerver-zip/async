@@ -146,30 +146,30 @@ Instead of transferring huge database files:
 - [x] Initialize Go module (`go.mod`) with pure-Go SQLite dependency.
 
 ### Milestone 2: Core Packages & Engine Modules
-- [ ] `internal/config`: Configuration file parser (`~/.config/async/config.toml`) for host prefixes and defaults.
-- [ ] `internal/lock`: Non-blocking kernel `flock` verification for Codex and AGY lock files.
-- [ ] `internal/pathmap`: Workspace prefix mapper, directory searcher, ambiguity detector, and path rewriting.
-- [ ] `internal/archive`: Streaming tarball (`tar.gz`) packager and unpacker with atomic staging.
+- [x] `internal/config`: Configuration file parser (`~/.config/async/config.toml`) for host prefixes and defaults.
+- [x] `internal/lock`: Non-blocking kernel `flock` verification for Codex and AGY lock files.
+- [x] `internal/pathmap`: Workspace prefix mapper, directory searcher, ambiguity detector, and path rewriting.
+- [x] `internal/archive`: Streaming tarball (`tar.gz`) packager and unpacker with atomic staging.
 
 ### Milestone 3: Provider Implementations
-- [ ] `internal/providers/codex`:
+- [x] `internal/providers/codex`:
   - Find latest thread by `cwd` (filtering `thread_source = 'user'`).
   - Resolve child subagents via `thread_spawn_edges`.
   - Surgically dump and import rows from `state_5.sqlite` and `thread_history_1.sqlite`.
   - Rewrite `rollout_path` and `cwd` in database and rollout JSONL header.
-- [ ] `internal/providers/agy`:
+- [x] `internal/providers/agy`:
   - Find latest conversation by workspace URI in `conversation_summaries.db`.
   - WAL checkpoint and package `conversations/<id>.db` + `brain/<id>/`.
   - Surgically upsert summary into target `conversation_summaries.db`.
 
 ### Milestone 4: SSH RPC Transport & CLI
-- [ ] `internal/transport/ssh`: SSH command runner using native `ssh` binary and `~/.ssh/config`.
-- [ ] `internal/rpc`: RPC protocol for query, lock checking, and data streaming between local and remote `async`.
-- [ ] `cmd/async`: CLI entrypoint with subcommands:
+- [x] `internal/transport/ssh`: SSH command runner using native `ssh` binary and `~/.ssh/config`.
+- [x] `internal/rpc`: RPC protocol for query, lock checking, and data streaming between local and remote `async`.
+- [x] `cmd/async`: CLI entrypoint with subcommands:
   - `push`, `pull`, `ls`, `status`, `deploy`, `_rpc`.
 
 ### Milestone 5: Deployment & End-to-End Validation
-- [ ] Build static binary with `CGO_ENABLED=0`.
-- [ ] Run `async deploy sandbox` to install `~/.local/bin/async` inside remote sandbox.
-- [ ] End-to-end test `async codex push sandbox`, `codex resume` in sandbox, `async codex pull sandbox`.
-- [ ] End-to-end test `async agy push sandbox` and `async agy pull sandbox`.
+- [x] Build static binary with `CGO_ENABLED=0`.
+- [x] Run `async deploy sandbox` to install `~/.local/bin/async` inside remote sandbox.
+- [x] End-to-end test `async codex push sandbox`, `codex resume` in sandbox, `async codex pull sandbox`.
+- [x] End-to-end test `async agy push sandbox` and `async agy pull sandbox`.

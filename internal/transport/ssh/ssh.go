@@ -70,7 +70,7 @@ func (c *Client) Deploy(localBinPath string) (string, error) {
 	defer f.Close()
 
 	remoteBinExpr := expandRemoteTildeExpr(c.RemoteBin)
-	remoteDirExpr := path.Dir(remoteBinExpr)
+	remoteDirExpr := expandRemoteTildeExpr(path.Dir(c.RemoteBin))
 
 	script := fmt.Sprintf(
 		"set -eu; mkdir -p %s; tmp=%s.tmp.$$; cat > \"$tmp\"; chmod 0755 \"$tmp\"; mv -f \"$tmp\" %s; %s --version",
