@@ -68,10 +68,10 @@ func IsNotFoundError(err error) bool {
 
 // TypedValue preserves exact SQLite column types across JSON serialization.
 type TypedValue struct {
-	Type string `json:"t"` // "null", "int", "float", "text", "blob"
-	Int  int64  `json:"i,omitempty"`
+	Type string  `json:"t"` // "null", "int", "float", "text", "blob"
+	Int  int64   `json:"i,omitempty"`
 	Flt  float64 `json:"f,omitempty"`
-	Str  string `json:"s,omitempty"`
+	Str  string  `json:"s,omitempty"`
 }
 
 // ToSQL converts a TypedValue back into a native driver value.

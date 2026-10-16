@@ -20,8 +20,8 @@ import (
 	"github.com/Nerver-zip/async/internal/transport/ssh"
 )
 
-// Version is the semantic version of the async binary.
-const Version = "0.1.0"
+// Version is the semantic version of the async binary (overridden via -ldflags "-X main.Version=...").
+var Version = "0.1.0"
 
 var uuidLikeFlagRe = regexp.MustCompile(`^--([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{8,})$`)
 
@@ -78,13 +78,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 }
 
 type parsedFlags struct {
-	id         string
-	targetPath string
-	cwd        string
-	force      bool
-	dryRun     bool
-	all        bool
-	jsonOutput bool
+	id          string
+	targetPath  string
+	cwd         string
+	force       bool
+	dryRun      bool
+	all         bool
+	jsonOutput  bool
 	positionals []string
 }
 

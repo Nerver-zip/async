@@ -22,14 +22,14 @@ import (
 
 // BundleManifest is serialized as manifest.json inside a Codex session bundle.
 type BundleManifest struct {
-	Version         int                               `json:"version"`
-	Meta            providers.SessionMeta             `json:"meta"`
-	ThreadIDs       []string                          `json:"thread_ids"`
-	RolloutRelPaths map[string]string                 `json:"rollout_rel_paths"`
-	StateSlices     map[string]*providers.TableSlice  `json:"state_slices"`
-	HistorySlices   map[string]*providers.TableSlice  `json:"history_slices,omitempty"`
-	GoalsSlices     map[string]*providers.TableSlice  `json:"goals_slices,omitempty"`
-	MemoriesSlices  map[string]*providers.TableSlice  `json:"memories_slices,omitempty"`
+	Version         int                              `json:"version"`
+	Meta            providers.SessionMeta            `json:"meta"`
+	ThreadIDs       []string                         `json:"thread_ids"`
+	RolloutRelPaths map[string]string                `json:"rollout_rel_paths"`
+	StateSlices     map[string]*providers.TableSlice `json:"state_slices"`
+	HistorySlices   map[string]*providers.TableSlice `json:"history_slices,omitempty"`
+	GoalsSlices     map[string]*providers.TableSlice `json:"goals_slices,omitempty"`
+	MemoriesSlices  map[string]*providers.TableSlice `json:"memories_slices,omitempty"`
 }
 
 const state5SchemaDDL = `

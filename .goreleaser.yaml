@@ -1,0 +1,94 @@
+version: 2
+
+project_name: async
+
+before:
+  hooks:
+    - go vet ./...
+    - go test -count=1 ./...
+
+builds:
+  - id: async
+    main: ./cmd/async
+    binary: async
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{ .Version }}
+
+changelog:
+  sort: asc
+  use: github
+  format: '[{{ printf "%.7s" .SHA }}](https://github.com/Nerver-zip/async/commit/{{ .SHA }}): {{ .Message }}{{ with .AuthorUsername }} (@{{ . }}){{ end }}'
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^refactor:"
+      - "^style:"
+  groups:
+    - title: "Breaking Changes"
+      regexp: '^.*?(\w+(\([[:word:]]+\))?!:).+$'
+      order: 0
+    - title: "Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Others"
+      order: 999
+
+archives:
+  - id: default
+    ids:
+      - async
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - config.example.toml
+
+checksum:
+  name_template: "checksums.txt"
+
+nfpms:
+  - id: linux-packages
+    ids:
+      - async
+    package_name: async
+    maintainer: Nerver-zip
+    description: Synchronize OpenAI Codex and Antigravity CLI conversation sessions over SSH.
+    homepage: https://github.com/Nerver-zip/async
+    license: MIT
+    formats:
+      - deb
+      - rpm
+
+release:
+  github:
+    owner: Nerver-zip
+    name: async
+  name_template: "v{{ .Version }}"
+  footer: |
+    ## Installation
+
+    Download the static archive for your operating system and architecture above, or install the `.deb` / `.rpm` package on Linux.
+    To deploy to a remote sandbox or server over SSH:
+    ```bash
+    async deploy <targethost>
+    ```

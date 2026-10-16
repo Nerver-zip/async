@@ -1,6 +1,6 @@
 module github.com/Nerver-zip/async
 
-go 1.27.2
+go 1.26.0
 
 require modernc.org/sqlite v1.60.1
 

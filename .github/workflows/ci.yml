@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_LOG_OPTS: "--all"
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Format check
+        run: test -z "$(gofmt -s -l .)"
+
+      - name: Whitespace diff check
+        run: git diff --check
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit and integration tests (race)
+        run: go test -v -count=1 -race ./...
+
+      - name: Build static binary and smoke test
+        run: |
+          set -eu
+          CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=ci" -o bin/async ./cmd/async
+          ./bin/async --version | grep -q "async ci"
+          ./bin/async --help >/dev/null
+
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+      - name: Cross-compile release targets
+        run: |
+          set -eu
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/async
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/async
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /dev/null ./cmd/async
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/async

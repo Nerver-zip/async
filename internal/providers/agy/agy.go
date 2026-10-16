@@ -20,10 +20,10 @@ import (
 
 // BundleManifest is stored as manifest.json inside an Antigravity CLI session bundle.
 type BundleManifest struct {
-	Version         int                    `json:"version"`
-	Meta            providers.SessionMeta  `json:"meta"`
-	ConversationIDs []string               `json:"conversation_ids"`
-	SummarySlice    *providers.TableSlice  `json:"summary_slice"`
+	Version         int                   `json:"version"`
+	Meta            providers.SessionMeta `json:"meta"`
+	ConversationIDs []string              `json:"conversation_ids"`
+	SummarySlice    *providers.TableSlice `json:"summary_slice"`
 }
 
 const summariesSchemaDDL = `

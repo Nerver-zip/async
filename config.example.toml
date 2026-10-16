@@ -1,0 +1,14 @@
+# Example configuration for async (Agent Sync)
+# Place at ~/.config/async/config.toml
+
+[defaults]
+local_prefix = "~/projects"
+remote_prefix = "~/workspace"
+
+[hosts.sandbox]
+prefix = "/home/user/workspace"
+binary = "~/.local/bin/async"
+
+[hosts.remote-server]
+prefix = "/home/user/dev"
+binary = "~/.local/bin/async"
