@@ -120,4 +120,16 @@ func TestLockedErrorFormatting(t *testing.T) {
 	if !strings.Contains(errWithPID.Error(), "PID 12345 (codex)") {
 		t.Errorf("unexpected error format with PID: %s", errWithPID.Error())
 	}
+	if !strings.Contains(errWithPID.Error(), "keeps an idle hold on the session for ~60s") {
+		t.Errorf("expected codex idle hint, got: %s", errWithPID.Error())
+	}
+
+	errAGY := &LockedError{
+		Provider:  "agy",
+		SessionID: "sess-3",
+		LockPath:  "/tmp/sess-3.lock",
+	}
+	if strings.Contains(errAGY.Error(), "Codex") {
+		t.Errorf("agy error should not contain codex hint: %s", errAGY.Error())
+	}
 }

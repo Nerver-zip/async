@@ -26,16 +26,23 @@ type LockedError struct {
 }
 
 func (e *LockedError) Error() string {
+	var proc string
 	if e.HolderPID > 0 {
-		proc := fmt.Sprintf("PID %d", e.HolderPID)
+		proc = fmt.Sprintf("PID %d", e.HolderPID)
 		if e.HolderCmd != "" {
 			proc += fmt.Sprintf(" (%s)", e.HolderCmd)
 		}
-		return fmt.Sprintf("session %s (%s) is currently locked by %s (%s); close or finish the session before syncing",
-			e.SessionID, e.Provider, proc, e.LockPath)
+	} else {
+		proc = "an active agent process"
 	}
-	return fmt.Sprintf("session %s (%s) is currently locked by an active agent process (%s); close or finish the session before syncing",
-		e.SessionID, e.Provider, e.LockPath)
+
+	hint := ""
+	if e.Provider == "codex" {
+		hint = " (if you recently closed the terminal, Codex's background daemon keeps an idle hold on the session for ~60s before releasing it; please wait a moment and retry)"
+	}
+
+	return fmt.Sprintf("session %s (%s) is currently locked by %s (%s); close or finish the session before syncing%s",
+		e.SessionID, e.Provider, proc, e.LockPath, hint)
 }
 
 // IsLockedError reports whether err is or wraps a *LockedError.
