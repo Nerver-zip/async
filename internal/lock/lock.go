@@ -6,17 +6,36 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
+
+// DefaultGracePeriod is the maximum time CheckAvailable will wait for a transient lock
+// (e.g. an agent process currently performing graceful shutdown after terminal exit) to clear.
+var DefaultGracePeriod = 1500 * time.Millisecond
+
+// DefaultPollInterval is the interval between lock checks during the grace period.
+var DefaultPollInterval = 100 * time.Millisecond
 
 // LockedError is returned when a conversation lock file is actively held by a running process.
 type LockedError struct {
 	Provider  string
 	SessionID string
 	LockPath  string
+	HolderPID int
+	HolderCmd string
 }
 
 func (e *LockedError) Error() string {
-	return fmt.Sprintf("session %s (%s) is currently locked by an active agent process (%s); close or finish the session before syncing", e.SessionID, e.Provider, e.LockPath)
+	if e.HolderPID > 0 {
+		proc := fmt.Sprintf("PID %d", e.HolderPID)
+		if e.HolderCmd != "" {
+			proc += fmt.Sprintf(" (%s)", e.HolderCmd)
+		}
+		return fmt.Sprintf("session %s (%s) is currently locked by %s (%s); close or finish the session before syncing",
+			e.SessionID, e.Provider, proc, e.LockPath)
+	}
+	return fmt.Sprintf("session %s (%s) is currently locked by an active agent process (%s); close or finish the session before syncing",
+		e.SessionID, e.Provider, e.LockPath)
 }
 
 // IsLockedError reports whether err is or wraps a *LockedError.
@@ -48,8 +67,35 @@ func LockPathFor(provider, providerHome, id string) (string, error) {
 }
 
 // CheckAvailable verifies that the lock file at lockPath is not held by another process.
+// If the lock is held, it retries up to DefaultGracePeriod to allow transient graceful
+// shutdowns (such as terminal closure) to complete before failing.
 // If the lock file does not exist, it returns nil without creating it.
 func CheckAvailable(provider, sessionID, lockPath string) error {
+	return CheckAvailableWithTimeout(provider, sessionID, lockPath, DefaultGracePeriod)
+}
+
+// CheckAvailableInstant verifies the lock immediately without waiting for any grace period.
+func CheckAvailableInstant(provider, sessionID, lockPath string) error {
+	return CheckAvailableWithTimeout(provider, sessionID, lockPath, 0)
+}
+
+// CheckAvailableWithTimeout tries to verify that the lock file at lockPath is available,
+// retrying up to timeout with DefaultPollInterval if it is initially held.
+func CheckAvailableWithTimeout(provider, sessionID, lockPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := tryCheckAvailable(provider, sessionID, lockPath)
+		if err == nil {
+			return nil
+		}
+		if !IsLockedError(err) || timeout <= 0 || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(DefaultPollInterval)
+	}
+}
+
+func tryCheckAvailable(provider, sessionID, lockPath string) error {
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -68,10 +114,13 @@ func CheckAvailable(provider, sessionID, lockPath string) error {
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			pid, cmd := findLockHolder(lockPath)
 			return &LockedError{
 				Provider:  provider,
 				SessionID: sessionID,
 				LockPath:  lockPath,
+				HolderPID: pid,
+				HolderCmd: cmd,
 			}
 		}
 		return fmt.Errorf("checking flock on %s: %w", lockPath, err)
@@ -82,8 +131,9 @@ func CheckAvailable(provider, sessionID, lockPath string) error {
 }
 
 // IsLocked returns true if the lock file exists and holds an active kernel flock.
+// It checks instantly without waiting for any grace period.
 func IsLocked(provider, sessionID, lockPath string) bool {
-	return IsLockedError(CheckAvailable(provider, sessionID, lockPath))
+	return IsLockedError(CheckAvailableInstant(provider, sessionID, lockPath))
 }
 
 // AcquireExclusive creates/opens lockPath and acquires a non-blocking exclusive flock.
@@ -101,10 +151,13 @@ func AcquireExclusive(provider, sessionID, lockPath string) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			pid, cmd := findLockHolder(lockPath)
 			return nil, &LockedError{
 				Provider:  provider,
 				SessionID: sessionID,
 				LockPath:  lockPath,
+				HolderPID: pid,
+				HolderCmd: cmd,
 			}
 		}
 		return nil, fmt.Errorf("acquiring flock on %s: %w", lockPath, err)
