@@ -863,3 +863,116 @@ func buildInClause(ids []string) (string, []any) {
 	}
 	return "(" + strings.Join(placeholders, ",") + ")", args
 }
+
+// DeleteSession permanently removes the specified session, its rollout files, and all child subagents.
+// If the session or any of its subagents is locked, it returns a *lock.LockedError without modifying anything.
+func DeleteSession(codexHome, id string) (*providers.SessionMeta, error) {
+	meta, err := FindSession(codexHome, id, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if err := CheckSessionLocks(codexHome, meta.ID); err != nil {
+		return nil, err
+	}
+
+	statePath := filepath.Join(codexHome, "state_5.sqlite")
+	stateDB, err := openSQLite(statePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening state_5.sqlite: %w", err)
+	}
+	defer stateDB.Close()
+
+	family, err := collectThreadFamily(stateDB, meta.ID)
+	if err != nil {
+		return nil, fmt.Errorf("collecting subagent family: %w", err)
+	}
+
+	inClause, inArgs := buildInClause(family)
+
+	// Collect rollout paths before deleting rows
+	var rolloutPaths []string
+	rows, err := stateDB.Query("SELECT DISTINCT rollout_path FROM threads WHERE id IN "+inClause+" AND rollout_path IS NOT NULL AND rollout_path != ''", inArgs...)
+	if err == nil {
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err == nil && p != "" {
+				rolloutPaths = append(rolloutPaths, p)
+			}
+		}
+		rows.Close()
+	}
+
+	// Delete from state_5.sqlite inside a transaction
+	tx, err := stateDB.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	edgeArgs := append(append([]any{}, inArgs...), inArgs...)
+	_, _ = tx.Exec("DELETE FROM thread_spawn_edges WHERE parent_thread_id IN "+inClause+" OR child_thread_id IN "+inClause, edgeArgs...)
+	for _, tbl := range []string{"thread_dynamic_tools", "thread_attachments", "thread_read_receipts", "guardian_review_feedback"} {
+		if exists, _ := providers.TableExists(stateDB, tbl); exists {
+			_, _ = tx.Exec("DELETE FROM "+tbl+" WHERE thread_id IN "+inClause, inArgs...)
+		}
+	}
+	if _, err := tx.Exec("DELETE FROM threads WHERE id IN "+inClause, inArgs...); err != nil {
+		return nil, fmt.Errorf("deleting from threads table: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing state_5.sqlite deletion: %w", err)
+	}
+	_, _ = stateDB.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+
+	// Delete from thread_history_1.sqlite if present
+	histPath := filepath.Join(codexHome, "thread_history_1.sqlite")
+	if _, err := os.Stat(histPath); err == nil {
+		if histDB, err := openSQLite(histPath); err == nil {
+			for _, tbl := range []string{"thread_items", "thread_turns"} {
+				if exists, _ := providers.TableExists(histDB, tbl); exists {
+					_, _ = histDB.Exec("DELETE FROM "+tbl+" WHERE thread_id IN "+inClause, inArgs...)
+				}
+			}
+			_, _ = histDB.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+			_ = histDB.Close()
+		}
+	}
+
+	// Delete from goals_1.sqlite if present
+	goalsPath := filepath.Join(codexHome, "goals_1.sqlite")
+	if _, err := os.Stat(goalsPath); err == nil {
+		if goalsDB, err := openSQLite(goalsPath); err == nil {
+			if exists, _ := providers.TableExists(goalsDB, "thread_goals"); exists {
+				_, _ = goalsDB.Exec("DELETE FROM thread_goals WHERE thread_id IN "+inClause, inArgs...)
+			}
+			_, _ = goalsDB.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+			_ = goalsDB.Close()
+		}
+	}
+
+	// Delete from memories_1.sqlite if present
+	memPath := filepath.Join(codexHome, "memories_1.sqlite")
+	if _, err := os.Stat(memPath); err == nil {
+		if memDB, err := openSQLite(memPath); err == nil {
+			if exists, _ := providers.TableExists(memDB, "memory_citations"); exists {
+				_, _ = memDB.Exec("DELETE FROM memory_citations WHERE thread_id IN "+inClause, inArgs...)
+			}
+			_, _ = memDB.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+			_ = memDB.Close()
+		}
+	}
+
+	// Delete rollout files and lock files from disk
+	for _, rpath := range rolloutPaths {
+		_ = os.Remove(rpath)
+		_ = os.Remove(rpath + ".zst")
+		_ = os.Remove(strings.TrimSuffix(rpath, ".zst"))
+	}
+	for _, tid := range family {
+		_ = os.Remove(lock.CodexLockPath(codexHome, tid))
+	}
+
+	return meta, nil
+}
+

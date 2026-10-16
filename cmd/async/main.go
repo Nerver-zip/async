@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Nerver-zip/async/internal/config"
 	"github.com/Nerver-zip/async/internal/pathmap"
@@ -24,6 +27,11 @@ import (
 var Version = "0.1.0"
 
 var uuidLikeFlagRe = regexp.MustCompile(`^--([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{8,})$`)
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$`)
+
+func isUUID(s string) bool {
+	return uuidRegex.MatchString(s)
+}
 
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
@@ -57,9 +65,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runDeploy(cfg, args[1:], stdout)
 	case "status":
 		return runStatus(cfg, args[1:], stdout, nil)
+	case "rm", "delete":
+		return runDeleteTopLevel(cfg, args[1:], stdin, stdout, stderr, nil)
+	case "clean", "prune":
+		return runCleanTopLevel(cfg, args[1:], stdin, stdout, stderr, nil)
 	case "codex", "agy":
 		if len(args) < 2 {
-			return fmt.Errorf("missing operation for provider %q (expected push, pull, or ls)", first)
+			return fmt.Errorf("missing operation for provider %q (expected push, pull, ls, rm, or clean)", first)
 		}
 		op := args[1]
 		switch op {
@@ -69,8 +81,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			return runPull(cfg, first, args[2:], stdout, nil)
 		case "ls", "list":
 			return runList(cfg, first, args[2:], stdout, nil)
+		case "rm", "delete":
+			return runDelete(cfg, first, args[2:], stdin, stdout, stderr, nil)
+		case "clean", "prune":
+			return runClean(cfg, first, args[2:], stdin, stdout, stderr, nil)
 		default:
-			return fmt.Errorf("unknown operation %q for provider %q (expected push, pull, or ls)", op, first)
+			return fmt.Errorf("unknown operation %q for provider %q (expected push, pull, ls, rm, or clean)", op, first)
 		}
 	default:
 		return fmt.Errorf("unknown command or provider %q; run 'async --help' for usage", first)
@@ -79,13 +95,51 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 type parsedFlags struct {
 	id          string
+	ids         []string
 	targetPath  string
 	cwd         string
+	workspace   string
+	olderThan   time.Duration
+	provider    string
+	host        string
 	force       bool
+	yes         bool
 	dryRun      bool
 	all         bool
 	jsonOutput  bool
 	positionals []string
+}
+
+func parseDurationWithDays(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty duration")
+	}
+	if strings.HasSuffix(s, "d") {
+		daysStr := strings.TrimSuffix(s, "d")
+		days, err := strconv.Atoi(daysStr)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration days %q: %w", s, err)
+		}
+		if days < 0 {
+			return 0, fmt.Errorf("duration days cannot be negative")
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
+}
+
+func confirmPrompt(stdin io.Reader, stdout io.Writer, prompt string) (bool, error) {
+	fmt.Fprint(stdout, prompt)
+	scanner := bufio.NewScanner(stdin)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	return ans == "y" || ans == "yes", nil
 }
 
 func parseFlexibleFlags(args []string) (*parsedFlags, error) {
@@ -94,6 +148,7 @@ func parseFlexibleFlags(args []string) (*parsedFlags, error) {
 		arg := args[i]
 		if m := uuidLikeFlagRe.FindStringSubmatch(arg); m != nil {
 			pf.id = m[1]
+			pf.ids = append(pf.ids, m[1])
 			continue
 		}
 		switch {
@@ -103,8 +158,11 @@ func parseFlexibleFlags(args []string) (*parsedFlags, error) {
 			}
 			i++
 			pf.id = args[i]
+			pf.ids = append(pf.ids, args[i])
 		case strings.HasPrefix(arg, "--id="):
-			pf.id = strings.TrimPrefix(arg, "--id=")
+			v := strings.TrimPrefix(arg, "--id=")
+			pf.id = v
+			pf.ids = append(pf.ids, v)
 		case arg == "--target-path":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("flag --target-path requires a value")
@@ -121,8 +179,50 @@ func parseFlexibleFlags(args []string) (*parsedFlags, error) {
 			pf.cwd = args[i]
 		case strings.HasPrefix(arg, "--cwd="):
 			pf.cwd = strings.TrimPrefix(arg, "--cwd=")
+		case arg == "--workspace" || arg == "-w":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag %s requires a value", arg)
+			}
+			i++
+			pf.workspace = args[i]
+		case strings.HasPrefix(arg, "--workspace="):
+			pf.workspace = strings.TrimPrefix(arg, "--workspace=")
+		case arg == "--older-than":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag --older-than requires a value")
+			}
+			i++
+			d, err := parseDurationWithDays(args[i])
+			if err != nil {
+				return nil, err
+			}
+			pf.olderThan = d
+		case strings.HasPrefix(arg, "--older-than="):
+			d, err := parseDurationWithDays(strings.TrimPrefix(arg, "--older-than="))
+			if err != nil {
+				return nil, err
+			}
+			pf.olderThan = d
+		case arg == "--provider" || arg == "-p":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag %s requires a value", arg)
+			}
+			i++
+			pf.provider = args[i]
+		case strings.HasPrefix(arg, "--provider="):
+			pf.provider = strings.TrimPrefix(arg, "--provider=")
+		case arg == "--host":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag --host requires a value")
+			}
+			i++
+			pf.host = args[i]
+		case strings.HasPrefix(arg, "--host="):
+			pf.host = strings.TrimPrefix(arg, "--host=")
 		case arg == "--force" || arg == "-f":
 			pf.force = true
+		case arg == "--yes" || arg == "-y":
+			pf.yes = true
 		case arg == "--dry-run":
 			pf.dryRun = true
 		case arg == "--all" || arg == "-a":
@@ -611,24 +711,336 @@ func truncateText(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
+func deleteLocalSession(cfg *config.Config, provider, id string) (*providers.SessionMeta, error) {
+	switch provider {
+	case "codex":
+		return codex.DeleteSession(cfg.CodexHome, id)
+	case "agy":
+		return agy.DeleteSession(cfg.AGYHome, id)
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", provider)
+	}
+}
+
+func runDeleteTopLevel(cfg *config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer, customRunner ssh.Runner) error {
+	pf, err := parseFlexibleFlags(args)
+	if err != nil {
+		return err
+	}
+	prov := pf.provider
+	if prov == "" {
+		prov = "codex"
+	}
+	return runDelete(cfg, prov, args, stdin, stdout, stderr, customRunner)
+}
+
+func runCleanTopLevel(cfg *config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer, customRunner ssh.Runner) error {
+	pf, err := parseFlexibleFlags(args)
+	if err != nil {
+		return err
+	}
+	prov := pf.provider
+	if prov == "" {
+		prov = "codex"
+	}
+	return runClean(cfg, prov, args, stdin, stdout, stderr, customRunner)
+}
+
+func runDelete(cfg *config.Config, provider string, args []string, stdin io.Reader, stdout, stderr io.Writer, customRunner ssh.Runner) error {
+	pf, err := parseFlexibleFlags(args)
+	if err != nil {
+		return err
+	}
+
+	host := pf.host
+	var rawIDs []string
+	rawIDs = append(rawIDs, pf.ids...)
+
+	for i, pos := range pf.positionals {
+		if host == "" && i == 0 && !isUUID(pos) && (len(pf.positionals) > 1 || len(pf.ids) > 0) {
+			host = pos
+			continue
+		}
+		rawIDs = append(rawIDs, pos)
+	}
+
+	seen := make(map[string]bool)
+	var ids []string
+	for _, id := range rawIDs {
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+
+	if len(ids) == 0 {
+		return fmt.Errorf("usage: async %s rm [targethost] <id...>", provider)
+	}
+
+	var runner ssh.Runner
+	if host != "" {
+		runner = customRunner
+		if runner == nil {
+			runner = ssh.NewClient(host, cfg.HostBinary(host))
+		}
+	}
+
+	targetDesc := ""
+	if host != "" {
+		targetDesc = " on " + host
+	}
+
+	if len(ids) > 1 && !pf.yes && !pf.force && !pf.dryRun {
+		ok, err := confirmPrompt(stdin, stdout, fmt.Sprintf("Are you sure you want to permanently delete these %d %s session(s)%s? [y/N]: ", len(ids), provider, targetDesc))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(stdout, "Deletion cancelled.")
+			return nil
+		}
+	}
+
+	var deleted []*providers.SessionMeta
+	for _, id := range ids {
+		if pf.dryRun {
+			var meta *providers.SessionMeta
+			if runner != nil {
+				meta, _ = rpc.RemoteFind(runner, provider, id, "")
+			} else {
+				meta, _ = findLocalSession(cfg, provider, id, "")
+			}
+			title := ""
+			steps := 0
+			if meta != nil {
+				title = truncateText(meta.Title, 40)
+				steps = meta.StepCount
+			}
+			fmt.Fprintf(stdout, "[dry-run] Would delete %s session %s (%q, %d steps)%s\n", provider, id, title, steps, targetDesc)
+			continue
+		}
+
+		var delMeta *providers.SessionMeta
+		if runner != nil {
+			delMeta, err = rpc.RemoteDelete(runner, provider, id)
+		} else {
+			delMeta, err = deleteLocalSession(cfg, provider, id)
+		}
+		if err != nil {
+			return fmt.Errorf("deleting %s session %s: %w", provider, id, err)
+		}
+		deleted = append(deleted, delMeta)
+		if !pf.jsonOutput {
+			title := truncateText(delMeta.Title, 40)
+			if title == "" {
+				title = truncateText(delMeta.Preview, 40)
+			}
+			fmt.Fprintf(stdout, "Deleted %s session %s%s (%q, %d steps)\n", provider, delMeta.ID, targetDesc, title, delMeta.StepCount)
+		}
+	}
+
+	if pf.jsonOutput && !pf.dryRun {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(deleted)
+	}
+
+	return nil
+}
+
+func runClean(cfg *config.Config, provider string, args []string, stdin io.Reader, stdout, stderr io.Writer, customRunner ssh.Runner) error {
+	pf, err := parseFlexibleFlags(args)
+	if err != nil {
+		return err
+	}
+	cwd, err := resolveWorkingDir(pf.cwd)
+	if err != nil {
+		return err
+	}
+
+	host := pf.host
+	if host == "" && len(pf.positionals) > 0 {
+		host = pf.positionals[0]
+	}
+
+	var runner ssh.Runner
+	if host != "" {
+		runner = customRunner
+		if runner == nil {
+			runner = ssh.NewClient(host, cfg.HostBinary(host))
+		}
+	}
+
+	targetWS := pf.workspace
+	if targetWS == "" && !pf.all {
+		if runner != nil {
+			if pf.targetPath != "" {
+				targetWS = pf.targetPath
+			} else {
+				projName := pathmap.ProjectName(cwd)
+				if resolved, err := rpc.RemoteResolvePath(runner, cfg.HostPrefix(host), projName); err == nil {
+					targetWS = resolved.Path
+				}
+			}
+		} else {
+			targetWS = cwd
+		}
+	}
+
+	var allSessions []providers.SessionMeta
+	if runner != nil {
+		allSessions, err = rpc.RemoteList(runner, provider, targetWS, pf.all)
+	} else {
+		allSessions, err = listLocalSessions(cfg, provider, targetWS, pf.all)
+	}
+	if err != nil {
+		return err
+	}
+
+	var candidates []providers.SessionMeta
+	var skippedLocked int
+	nowMs := time.Now().UnixMilli()
+
+	for _, s := range allSessions {
+		if s.Locked {
+			skippedLocked++
+			continue
+		}
+		if pf.olderThan > 0 {
+			cutoffMs := nowMs - pf.olderThan.Milliseconds()
+			if s.UpdatedAt >= cutoffMs {
+				continue
+			}
+		}
+		if targetWS != "" && !pf.all && s.Workspace != "" && s.Workspace != targetWS {
+			continue
+		}
+		candidates = append(candidates, s)
+	}
+
+	if len(candidates) == 0 {
+		if pf.jsonOutput {
+			fmt.Fprintln(stdout, "[]")
+			return nil
+		}
+		msg := fmt.Sprintf("No matching %s sessions found to clean", provider)
+		if skippedLocked > 0 {
+			msg += fmt.Sprintf(" (%d active/locked session(s) skipped)", skippedLocked)
+		}
+		fmt.Fprintln(stdout, msg+".")
+		return nil
+	}
+
+	targetDesc := ""
+	if host != "" {
+		targetDesc = " on " + host
+	}
+
+	if !pf.jsonOutput {
+		fmt.Fprintf(stdout, "Found %d %s session(s) to clean%s:\n", len(candidates), provider, targetDesc)
+		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tUPDATED\tSTEPS\tSUBS\tWORKSPACE\tTITLE")
+		for _, s := range candidates {
+			title := truncateText(s.Title, 40)
+			if title == "" {
+				title = truncateText(s.Preview, 40)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\n",
+				s.ID, s.UpdatedAtISO, s.StepCount, s.SubagentCount, s.Workspace, title)
+		}
+		_ = tw.Flush()
+	}
+
+	if pf.dryRun {
+		if pf.jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(candidates)
+		}
+		fmt.Fprintf(stdout, "\n[dry-run] %d session(s) would be deleted. No changes made.\n", len(candidates))
+		return nil
+	}
+
+	if !pf.yes && !pf.force {
+		ok, err := confirmPrompt(stdin, stdout, fmt.Sprintf("\nAre you sure you want to permanently delete these %d session(s)%s? [y/N]: ", len(candidates), targetDesc))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(stdout, "Clean cancelled.")
+			return nil
+		}
+	}
+
+	var deleted []providers.SessionMeta
+	var deleteErrors []string
+	for _, s := range candidates {
+		var delMeta *providers.SessionMeta
+		if runner != nil {
+			delMeta, err = rpc.RemoteDelete(runner, provider, s.ID)
+		} else {
+			delMeta, err = deleteLocalSession(cfg, provider, s.ID)
+		}
+		if err != nil {
+			deleteErrors = append(deleteErrors, fmt.Sprintf("%s: %v", s.ID, err))
+			fmt.Fprintf(stderr, "warning: failed to delete %s session %s: %v\n", provider, s.ID, err)
+			continue
+		}
+		deleted = append(deleted, *delMeta)
+		if !pf.jsonOutput {
+			title := truncateText(delMeta.Title, 40)
+			if title == "" {
+				title = truncateText(delMeta.Preview, 40)
+			}
+			fmt.Fprintf(stdout, "Deleted %s (%s, %d steps)\n", delMeta.ID, title, delMeta.StepCount)
+		}
+	}
+
+	if pf.jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(deleted)
+	}
+
+	fmt.Fprintf(stdout, "\nSuccessfully cleaned %d %s session(s)%s.\n", len(deleted), provider, targetDesc)
+	if skippedLocked > 0 {
+		fmt.Fprintf(stdout, "(skipped %d active/locked session(s))\n", skippedLocked)
+	}
+	if len(deleteErrors) > 0 {
+		return fmt.Errorf("%d deletion(s) failed", len(deleteErrors))
+	}
+	return nil
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, `async (Agent Sync) — Synchronize Codex and Antigravity CLI sessions over SSH
 
 Usage:
   async <codex|agy> push [flags] <targethost>
   async <codex|agy> pull [flags] <targethost>
-  async <codex|agy> ls [targethost] [--all] [--json]
+  async <codex|agy> ls [flags] [targethost]
+  async <codex|agy> rm [flags] [targethost] <id...>
+  async <codex|agy> clean [flags] [targethost]
   async status [targethost]
   async deploy <targethost>
+
+Aliases:
+  async rm [flags] [targethost] <id...>
+  async clean [flags] [targethost]
 
 Flags:
   --id, -i <uuid>        Explicit conversation ID (or pass --<uuid> directly)
   --target-path <path>   Explicit remote workspace directory override
   --cwd <path>           Override local working directory
-  --force, -f            Overwrite destination even if destination is newer
+  --workspace, -w <dir>  Filter clean/list by workspace directory
+  --older-than <dur>     Filter clean by age (e.g. 7d, 24h, 30m)
+  --provider, -p <name>  Specify provider for top-level commands (codex|agy, default: codex)
+  --host <targethost>    Specify remote target host explicitly
+  --yes, -y              Confirm bulk deletion without interactive prompt
+  --force, -f            Overwrite destination or force deletion
   --dry-run              Show planned action without modifying state
-  --all, -a              List sessions across all workspaces
-  --json                 Output session list as JSON
+  --all, -a              Operate across all workspaces (default is current project)
+  --json                 Output results as JSON
   --version, -v          Show version
   --help, -h             Show this help message
 `)

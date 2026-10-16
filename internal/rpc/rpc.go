@@ -118,8 +118,32 @@ func HandleServer(cfg *config.Config, args []string, stdin io.Reader, stdout io.
 		}
 		return json.NewEncoder(stdout).Encode(meta)
 
+	case "delete":
+		fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+		provider := fs.String("provider", "", "provider (codex|agy)")
+		id := fs.String("id", "", "conversation id")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		meta, err := deleteLocal(cfg, *provider, *id)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(meta)
+
 	default:
 		return fmt.Errorf("unknown _rpc subcommand %q", sub)
+	}
+}
+
+func deleteLocal(cfg *config.Config, provider, id string) (*providers.SessionMeta, error) {
+	switch provider {
+	case "codex":
+		return codex.DeleteSession(cfg.CodexHome, id)
+	case "agy":
+		return agy.DeleteSession(cfg.AGYHome, id)
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", provider)
 	}
 }
 
@@ -273,3 +297,18 @@ func RemoteImport(runner ssh.Runner, provider string, bundleReader io.Reader, ta
 	}
 	return &meta, nil
 }
+
+// RemoteDelete invokes `_rpc delete` on the remote runner.
+func RemoteDelete(runner ssh.Runner, provider, id string) (*providers.SessionMeta, error) {
+	var out bytes.Buffer
+	args := []string{"delete", "--provider", provider, "--id", id}
+	if err := runner.RunRPC(args, nil, &out); err != nil {
+		return nil, err
+	}
+	var meta providers.SessionMeta
+	if err := json.Unmarshal(out.Bytes(), &meta); err != nil {
+		return nil, fmt.Errorf("decoding remote delete response: %w", err)
+	}
+	return &meta, nil
+}
+

@@ -229,3 +229,61 @@ func TestCodexSurgicalExportImportAndSubagents(t *testing.T) {
 		t.Fatalf("expected LockedError when child subagent lock is held, got: %v", err)
 	}
 }
+
+func TestDeleteCodexSessionAndSubagents(t *testing.T) {
+	home := t.TempDir()
+	ws := "/workspace/test-proj"
+	parentID := "01a14200-1111-2222-3333-444455556666"
+	childID := "01a14200-7777-8888-9999-aaaabbbbcccc"
+
+	seedCodexFixture(t, home, parentID, childID, ws, 1792100000, 5)
+
+	// Verify session can be listed and found
+	meta, err := FindSession(home, parentID, "")
+	if err != nil {
+		t.Fatalf("FindSession failed: %v", err)
+	}
+	if meta.SubagentCount != 1 {
+		t.Errorf("expected 1 subagent, got %d", meta.SubagentCount)
+	}
+
+	// 1. When locked, DeleteSession must fail and not delete anything
+	release, err := lock.AcquireExclusive("codex", parentID, lock.CodexLockPath(home, parentID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeleteSession(home, parentID); !lock.IsLockedError(err) {
+		t.Fatalf("expected LockedError for locked session, got: %v", err)
+	}
+	release()
+
+	// 2. Delete the session
+	deleted, err := DeleteSession(home, parentID)
+	if err != nil {
+		t.Fatalf("DeleteSession failed: %v", err)
+	}
+	if deleted.ID != parentID {
+		t.Errorf("deleted ID = %s, want %s", deleted.ID, parentID)
+	}
+
+	// 3. Verify session no longer found
+	if _, err := FindSession(home, parentID, ""); err == nil {
+		t.Fatalf("expected error finding deleted session, got nil")
+	}
+
+	// 4. Verify threads table is empty
+	stateDB, err := openSQLite(filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stateDB.Close()
+
+	var count int
+	if err := stateDB.QueryRow("SELECT COUNT(*) FROM threads WHERE id IN (?, ?)", parentID, childID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 threads in DB after delete, found %d", count)
+	}
+}
+

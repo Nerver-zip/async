@@ -599,3 +599,47 @@ func buildInClause(ids []string) (string, []any) {
 	}
 	return "(" + strings.Join(placeholders, ",") + ")", args
 }
+
+// DeleteSession permanently removes the specified conversation, its brain directory, conversation DB, and any child subagents.
+// If the conversation or any of its subagents is locked, it returns a *lock.LockedError without deleting anything.
+func DeleteSession(agyHome, id string) (*providers.SessionMeta, error) {
+	meta, err := FindSession(agyHome, id, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if err := CheckSessionLocks(agyHome, meta.ID); err != nil {
+		return nil, err
+	}
+
+	sumPath := filepath.Join(agyHome, "conversation_summaries.db")
+	db, err := openSQLite(sumPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening conversation_summaries.db: %w", err)
+	}
+	defer db.Close()
+
+	family, err := collectConversationFamily(db, meta.ID)
+	if err != nil {
+		return nil, fmt.Errorf("collecting subagent family: %w", err)
+	}
+
+	inClause, inArgs := buildInClause(family)
+	if _, err := db.Exec("DELETE FROM conversation_summaries WHERE conversation_id IN "+inClause, inArgs...); err != nil {
+		return nil, fmt.Errorf("deleting from conversation_summaries: %w", err)
+	}
+	_, _ = db.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+
+	for _, cid := range family {
+		_ = os.RemoveAll(filepath.Join(agyHome, "brain", cid))
+		_ = os.Remove(filepath.Join(agyHome, "conversations", cid+".db"))
+		_ = os.Remove(filepath.Join(agyHome, "conversations", cid+".db-wal"))
+		_ = os.Remove(filepath.Join(agyHome, "conversations", cid+".db-shm"))
+		_ = os.Remove(filepath.Join(agyHome, "annotations", cid+".pbtxt"))
+		_ = os.Remove(filepath.Join(agyHome, "implicit", cid+".pb"))
+		_ = os.Remove(lock.AGYLockPath(agyHome, cid))
+	}
+
+	return meta, nil
+}
+

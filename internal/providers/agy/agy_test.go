@@ -191,3 +191,69 @@ func TestAGYExportImportRewritesAndLocks(t *testing.T) {
 		t.Fatalf("expected LockedError when presence lock is held, got: %v", err)
 	}
 }
+
+func TestDeleteAGYSessionAndSubagents(t *testing.T) {
+	home := t.TempDir()
+	ws := "/workspace/my-agy-app"
+	convID := "99991111-2222-3333-4444-555566667777"
+	childID := "99991111-aaaa-bbbb-cccc-dddd88889999"
+
+	seedAGYFixture(t, home, convID, childID, ws, "2026-10-15T12:00:00Z", 42)
+
+	// Verify session found
+	meta, err := FindSession(home, convID, "")
+	if err != nil {
+		t.Fatalf("FindSession failed: %v", err)
+	}
+	if meta.SubagentCount != 1 {
+		t.Errorf("expected 1 subagent, got %d", meta.SubagentCount)
+	}
+
+	// 1. Lock session: DeleteSession must fail
+	release, err := lock.AcquireExclusive("agy", convID, lock.AGYLockPath(home, convID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeleteSession(home, convID); !lock.IsLockedError(err) {
+		t.Fatalf("expected LockedError for locked session, got: %v", err)
+	}
+	release()
+
+	// 2. Delete session
+	deleted, err := DeleteSession(home, convID)
+	if err != nil {
+		t.Fatalf("DeleteSession failed: %v", err)
+	}
+	if deleted.ID != convID {
+		t.Errorf("deleted ID = %s, want %s", deleted.ID, convID)
+	}
+
+	// 3. Verify session no longer found
+	if _, err := FindSession(home, convID, ""); err == nil {
+		t.Fatalf("expected error finding deleted session, got nil")
+	}
+
+	// 4. Verify conversation_summaries table is empty
+	sumDB, err := openSQLite(filepath.Join(home, "conversation_summaries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sumDB.Close()
+
+	var count int
+	if err := sumDB.QueryRow("SELECT COUNT(*) FROM conversation_summaries WHERE conversation_id IN (?, ?)", convID, childID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 summaries after delete, got %d", count)
+	}
+
+	// 5. Verify brain dir and db files removed
+	if _, err := os.Stat(filepath.Join(home, "brain", convID)); !os.IsNotExist(err) {
+		t.Errorf("brain dir should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(home, "conversations", convID+".db")); !os.IsNotExist(err) {
+		t.Errorf("conversations db should be removed")
+	}
+}
+
