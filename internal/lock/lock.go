@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -119,8 +118,8 @@ func tryCheckAvailable(provider, sessionID, lockPath string) error {
 	}
 	defer f.Close()
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+	if err := flockExclusiveNB(f); err != nil {
+		if isFlockBlocked(err) {
 			pid, cmd := findLockHolder(lockPath)
 			return &LockedError{
 				Provider:  provider,
@@ -133,7 +132,7 @@ func tryCheckAvailable(provider, sessionID, lockPath string) error {
 		return fmt.Errorf("checking flock on %s: %w", lockPath, err)
 	}
 
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = flockUnlock(f)
 	return nil
 }
 
@@ -155,9 +154,9 @@ func AcquireExclusive(provider, sessionID, lockPath string) (func(), error) {
 		return nil, fmt.Errorf("opening lock file %s: %w", lockPath, err)
 	}
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := flockExclusiveNB(f); err != nil {
 		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+		if isFlockBlocked(err) {
 			pid, cmd := findLockHolder(lockPath)
 			return nil, &LockedError{
 				Provider:  provider,
@@ -176,7 +175,7 @@ func AcquireExclusive(provider, sessionID, lockPath string) (func(), error) {
 			return
 		}
 		released = true
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flockUnlock(f)
 		_ = f.Close()
 	}
 	return release, nil

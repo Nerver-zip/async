@@ -15,10 +15,40 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - windows
       - darwin
+      - android
     goarch:
       - amd64
       - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: linux
+        goarch: arm
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: arm
+      - goos: android
+        goarch: amd64
+      - goos: android
+        goarch: arm
+    ldflags:
+      - -s -w -X main.Version={{ .Version }}
+
+  - id: async-termux-armv7
+    main: ./cmd/async
+    binary: async
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - arm
+    goarm:
+      - "7"
     ldflags:
       - -s -w -X main.Version={{ .Version }}
 
@@ -35,16 +65,16 @@ changelog:
       - "^refactor:"
       - "^style:"
   groups:
-    - title: "Breaking Changes"
+    - title: "💥 Breaking Changes"
       regexp: '^.*?(\w+(\([[:word:]]+\))?!:).+$'
       order: 0
-    - title: "Features"
+    - title: "🚀 Features"
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
       order: 1
-    - title: "Bug Fixes"
+    - title: "🐛 Bug fixes"
       regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
       order: 2
-    - title: "Others"
+    - title: "🧹 Others"
       order: 999
 
 archives:
@@ -57,7 +87,23 @@ archives:
       {{ .ProjectName }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm" }}armv{{ .Arm }}
       {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - config.example.toml
+
+  - id: termux-armv7
+    ids:
+      - async-termux-armv7
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_Termux_armv7"
     files:
       - README.md
       - LICENSE
@@ -85,10 +131,12 @@ release:
     name: async
   name_template: "v{{ .Version }}"
   footer: |
-    ## Installation
+    ## Install
 
-    Download the static archive for your operating system and architecture above, or install the `.deb` / `.rpm` package on Linux.
-    To deploy to a remote sandbox or server over SSH:
+    ### Go
     ```bash
-    async deploy <targethost>
+    go install github.com/Nerver-zip/async/cmd/async@latest
     ```
+
+    ### Download Binary
+    Download the archive for your operating system and architecture above. Linux users can also install the `.deb` or `.rpm` package.

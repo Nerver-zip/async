@@ -1,5 +1,6 @@
 # async (Agent Sync)
 
+[![Latest Release](https://img.shields.io/github/v/release/Nerver-zip/async)](https://github.com/Nerver-zip/async/releases/latest)
 [![Go Version](https://img.shields.io/badge/go-1.24%2B-blue.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -30,13 +31,28 @@ When working with terminal AI coding agents across multiple machines (e.g. devel
 
 ## Installation
 
+### Pre-built Binaries
+
+Download pre-compiled static binaries or Linux `.deb` / `.rpm` packages for your platform from the [Releases page](https://github.com/Nerver-zip/async/releases/latest).
+
+Supported platforms:
+- **Linux** (`amd64`, `arm64`, `armv7 / Termux`)
+- **macOS** (`amd64`, `arm64 / Apple Silicon`)
+- **Windows** (`amd64`, `arm64`)
+- **Android** (`arm64`)
+
+### Go Install
+
+```bash
+go install github.com/Nerver-zip/async/cmd/async@latest
+```
+
 ### From Source
 
 ```bash
 git clone https://github.com/Nerver-zip/async.git
 cd async
-go build -o async ./cmd/async
-sudo install -m 755 async /usr/local/bin/async
+make install
 ```
 
 ### Deploy to Remote Host
@@ -98,6 +114,20 @@ async agy ls [targethost]
 
 # List all stored conversations across all workspaces
 async codex ls --all
+```
+
+### 5. Remove or Clean Sessions
+
+```bash
+# Delete a specific session by ID (removes family, rollouts, DB rows, and locks)
+async codex rm <session-id>
+async codex rm sandbox <session-id>
+
+# Clean sessions with interactive confirmation [y/N]
+async codex clean sandbox
+async codex clean sandbox --older-than 7d
+async codex clean sandbox --all --yes
+async codex clean sandbox --dry-run
 ```
 
 ---

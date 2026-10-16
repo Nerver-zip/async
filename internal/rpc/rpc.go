@@ -311,4 +311,3 @@ func RemoteDelete(runner ssh.Runner, provider, id string) (*providers.SessionMet
 	}
 	return &meta, nil
 }
-

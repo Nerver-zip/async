@@ -642,4 +642,3 @@ func DeleteSession(agyHome, id string) (*providers.SessionMeta, error) {
 
 	return meta, nil
 }
-

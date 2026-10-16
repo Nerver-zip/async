@@ -286,4 +286,3 @@ func TestDeleteCodexSessionAndSubagents(t *testing.T) {
 		t.Errorf("expected 0 threads in DB after delete, found %d", count)
 	}
 }
-
