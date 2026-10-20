@@ -33,6 +33,14 @@ type BundleManifest struct {
 }
 
 const state5SchemaDDL = `
+CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL,
+    checksum BLOB NOT NULL,
+    execution_time BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     rollout_path TEXT NOT NULL,
@@ -449,6 +457,10 @@ func ExportBundle(codexHome, id, workspace string, w io.Writer) (*providers.Sess
 	}
 
 	// 1. Export from state_5.sqlite
+	if s, err := providers.ExportTableSlice(stateDB, "_sqlx_migrations", ""); err == nil && s != nil {
+		manifest.StateSlices["_sqlx_migrations"] = s
+	}
+
 	if s, err := providers.ExportTableSlice(stateDB, "threads", "id IN "+inClause, inArgs...); err != nil {
 		return nil, err
 	} else if s != nil {
@@ -644,6 +656,7 @@ func ImportBundle(codexHome string, r io.Reader, targetWorkspace string, force b
 	// Merge into state_5.sqlite
 	statePath := filepath.Join(codexHome, "state_5.sqlite")
 	if err := mergeIntoSQLite(statePath, state5SchemaDDL, manifest.StateSlices, []string{
+		"_sqlx_migrations",
 		"threads",
 		"thread_spawn_edges",
 		"thread_dynamic_tools",

@@ -49,6 +49,11 @@ func seedCodexFixture(t *testing.T, codexHome, parentID, childID, workspace stri
 		t.Fatal(err)
 	}
 
+	_, err = stateDB.Exec(`INSERT OR REPLACE INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (1, 'threads', 1, X'00', 10), (2, 'logs', 1, X'00', 15)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	_, err = stateDB.Exec(`
 INSERT OR REPLACE INTO threads (id, rollout_path, created_at, updated_at, created_at_ms, updated_at_ms, source, thread_source, model_provider, cwd, title, sandbox_policy, approval_mode, archived, history_mode)
 VALUES (?, ?, ?, ?, ?, ?, 'cli', 'user', 'openai', ?, ?, 'workspace-write', 'on-request', 0, 'paginated')
@@ -284,5 +289,49 @@ func TestDeleteCodexSessionAndSubagents(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("expected 0 threads in DB after delete, found %d", count)
+	}
+}
+
+func TestCodexImportToCleanDestinationPreservesSqlxMigrations(t *testing.T) {
+	srcHome := t.TempDir()
+	cleanDstHome := t.TempDir()
+
+	srcWS := "/home/user/projects/clean-proj"
+	dstWS := "/home/user/workspace/clean-proj"
+	parentID := "01a15555-1111-2222-3333-444455556666"
+
+	seedCodexFixture(t, srcHome, parentID, "", srcWS, 1792100000, 3)
+
+	var bundle bytes.Buffer
+	if _, err := ExportBundle(srcHome, parentID, "", &bundle); err != nil {
+		t.Fatalf("ExportBundle failed: %v", err)
+	}
+
+	// Import into cleanDstHome where no .codex files existed previously
+	if _, err := ImportBundle(cleanDstHome, &bundle, dstWS, false); err != nil {
+		t.Fatalf("ImportBundle failed: %v", err)
+	}
+
+	// Verify state_5.sqlite has _sqlx_migrations populated
+	dstStateDB, err := openSQLite(filepath.Join(cleanDstHome, "state_5.sqlite"))
+	if err != nil {
+		t.Fatalf("opening imported state_5.sqlite: %v", err)
+	}
+	defer dstStateDB.Close()
+
+	var migrationCount int
+	if err := dstStateDB.QueryRow("SELECT COUNT(*) FROM _sqlx_migrations").Scan(&migrationCount); err != nil {
+		t.Fatalf("querying _sqlx_migrations in clean destination: %v", err)
+	}
+	if migrationCount != 2 {
+		t.Errorf("expected 2 migrations in destination, got %d", migrationCount)
+	}
+
+	var threadCount int
+	if err := dstStateDB.QueryRow("SELECT COUNT(*) FROM threads WHERE id = ?", parentID).Scan(&threadCount); err != nil {
+		t.Fatalf("querying threads in clean destination: %v", err)
+	}
+	if threadCount != 1 {
+		t.Errorf("expected 1 thread in destination, got %d", threadCount)
 	}
 }
